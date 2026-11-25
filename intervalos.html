@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Modelo de Intervalo - UNAD</title>
+
+<style>
+body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background: linear-gradient(135deg, #002F6C, #004a99);
+    text-align: center;
+    margin: 0;
+    padding: 10px;
+    min-height: 100vh;
+    box-sizing: border-box;
+}
+
+.container {
+    background: white;
+    max-width: 750px;
+    margin: 30px auto;
+    padding: 20px;
+    border-radius: 15px;
+}
+
+h1 { color:#f58220; }
+h3 { color:#FFFFFF; }
+
+input, select {
+    padding:8px;
+    margin:5px;
+    border-radius:6px;
+    width:100px;
+    font-size:15px;
+}
+
+button {
+    padding:10px;
+    margin:5px;
+    border:none;
+    border-radius:8px;
+    font-weight:bold;
+    cursor:pointer;
+}
+
+.btn1 { background:#f58220; color:white; }
+.btn2 { background:#999; color:white; }
+.btn3 { background:#002F6C; color:white; }
+
+.ayuda {
+    font-size:13px;
+    color:#666;
+    margin-top:4px;
+}
+
+canvas {
+    display:block;
+    margin:20px auto 0;
+    width:700px;
+    max-width:100%;
+    height:auto;
+    background:white;
+    border-radius:10px;
+}
+
+.resultado {
+    font-size:22px;
+    font-weight:bold;
+    color:#002F6C;
+    margin-top:10px;
+}
+
+.info {
+    font-weight:bold;
+    color:#002F6C;
+    margin-top:5px;
+    line-height:1.6;
+}
+
+.mensaje {
+    color:red;
+    font-weight:bold;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<h1>Modelado de Intervalos Reales</h1>
+
+<input id="izq" placeholder="Izq">
+<select id="op1">
+<option>&lt;</option>
+<option>&le;</option>
+</select>
+
+<span>x</span>
+
+<select id="op2">
+<option>&lt;</option>
+<option>&le;</option>
+</select>
+
+<input id="der" placeholder="Der">
+
+<div class="ayuda">Acepta enteros, decimales (4.5 o 4,5) y fracciones (1/2).</div>
+
+<button class="btn1" onclick="graficar()">Graficar</button>
+<button class="btn2" onclick="limpiar()">Limpiar</button>
+<button class="btn3" onclick="exportar()">Exportar</button>
+
+<div class="mensaje" id="msg"></div>
+<div class="resultado" id="intervalo"></div>
+<div class="info" id="info"></div>
+
+<canvas id="canvas" width="700" height="250"></canvas>
+
+</div>
+
+<script>
+
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+const ANCHO = 700;      // tamaño lógico del lienzo
+const ALTO = 250;
+const Y_EJE = 140;      // altura de la recta numérica
+const MARGEN = 55;      // margen lateral de la zona graficada
+const SEP_MIN = 45;     // separación mínima (px) entre marcas del eje
+
+// ✅ LIENZO NÍTIDO EN PANTALLAS DE ALTA DENSIDAD
+function prepararCanvas(){
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = ANCHO * dpr;
+    canvas.height = ALTO * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+// ✅ LECTURA DE NÚMEROS (enteros, decimales con punto o coma, fracciones)
+function leerNumero(texto){
+    let t = texto.trim().replace(/\s+/g, "").replace(",", ".");
+    if(t === "") return { valor: NaN };
+
+    let fr = t.match(/^([+-]?\d+(?:\.\d+)?)\/([+-]?\d+(?:\.\d+)?)$/);
+    if(fr){
+        let d = parseFloat(fr[2]);
+        if(d === 0) return { valor: NaN };
+        return { valor: parseFloat(fr[1]) / d, texto: t };
+    }
+
+    if(!/^[+-]?(\d+\.?\d*|\.\d+)$/.test(t)) return { valor: NaN };
+
+    let v = parseFloat(t);
+    return { valor: v, texto: formatear(v) };
+}
+
+// ✅ FORMATO LIMPIO (sin errores de coma flotante como 0.30000000004)
+function formatear(v){
+    let r = Number(v.toPrecision(10));
+    if(Object.is(r, -0)) r = 0;
+    return String(r);
+}
+
+// ✅ ESCALA INTELIGENTE: pasos 1, 2, 5, 10, 20, 50… (y 0.1, 0.2, 0.5…)
+function pasoBonito(bruto){
+    let potencia = Math.pow(10, Math.floor(Math.log10(bruto)));
+    let n = bruto / potencia;
+    let f = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+    return f * potencia;
+}
+
+function decimalesDe(paso){
+    return Math.max(0, -Math.floor(Math.log10(paso) + 1e-9));
+}
+
+function etiquetasDelEje(min, max, paso){
+    let dec = decimalesDe(paso);
+    let kIni = Math.ceil(min / paso - 1e-9);
+    let kFin = Math.floor(max / paso + 1e-9);
+    let lista = [];
+    for(let k = kIni; k <= kFin; k++){
+        let v = k * paso;
+        if(Math.abs(v) < paso * 1e-6) v = 0;
+        let txt = v.toFixed(dec);
+        if(/^-0(\.0+)?$/.test(txt)) txt = txt.slice(1);
+        lista.push({ v, txt });
+    }
+    return lista;
+}
+
+// ✅ FLECHA EN LOS EXTREMOS DE LA RECTA
+function flecha(x, dir){
+    ctx.beginPath();
+    ctx.moveTo(x, Y_EJE);
+    ctx.lineTo(x - dir * 10, Y_EJE - 5);
+    ctx.lineTo(x - dir * 10, Y_EJE + 5);
+    ctx.closePath();
+    ctx.fillStyle = "#555";
+    ctx.fill();
+}
+
+// ✅ EJE DINÁMICO Y LIMPIO
+function eje(min, max){
+
+    // fondo blanco (también queda en la imagen exportada)
+    ctx.clearRect(0, 0, ANCHO, ALTO);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, ANCHO, ALTO);
+
+    let escala = (ANCHO - 2 * MARGEN) / (max - min);
+    function X(x){ return MARGEN + (x - min) * escala; }
+
+    // línea base con flechas
+    ctx.beginPath();
+    ctx.strokeStyle = "#555";
+    ctx.lineWidth = 1.5;
+    ctx.moveTo(MARGEN - 30, Y_EJE);
+    ctx.lineTo(ANCHO - MARGEN + 30, Y_EJE);
+    ctx.stroke();
+    flecha(MARGEN - 32, -1);
+    flecha(ANCHO - MARGEN + 32, 1);
+
+    // elegir un paso cuyas etiquetas no se encimen
+    ctx.font = "13px Arial";
+    let paso = pasoBonito((max - min) / 10);
+    let marcas;
+    for(let intento = 0; intento < 20; intento++){
+        marcas = etiquetasDelEje(min, max, paso);
+        let anchoMax = Math.max(...marcas.map(m => ctx.measureText(m.txt).width));
+        if(paso * escala >= Math.max(SEP_MIN, anchoMax + 14)) break;
+        paso = pasoBonito(paso * 1.5);
+    }
+
+    ctx.fillStyle = "#333";
+    ctx.strokeStyle = "#555";
+    ctx.lineWidth = 1.5;
+    ctx.textAlign = "center";
+
+    for(let m of marcas){
+        let px = X(m.v);
+        ctx.beginPath();
+        ctx.moveTo(px, Y_EJE - 6);
+        ctx.lineTo(px, Y_EJE + 6);
+        ctx.stroke();
+        ctx.fillText(m.txt, px, Y_EJE + 25);
+    }
+
+    return X;
+}
+
+// ✅ PUNTOS ABIERTOS / CERRADOS
+function punto(X, x, cerrado){
+
+    let px = X(x);
+
+    ctx.beginPath();
+    ctx.arc(px, Y_EJE, 7, 0, 2 * Math.PI);
+    ctx.fillStyle = cerrado ? "#f58220" : "#fff";
+    ctx.fill();
+
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#f58220";
+    ctx.stroke();
+}
+
+// ✅ VALOR DEL EXTREMO, SOBRE EL PUNTO
+function etiquetaExtremo(X, x, texto){
+    ctx.fillStyle = "#c45f00";
+    ctx.font = "bold 15px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(texto, X(x), Y_EJE - 20);
+}
+
+// ✅ GRAFICAR
+function graficar(){
+
+    let a = leerNumero(document.getElementById("izq").value);
+    let b = leerNumero(document.getElementById("der").value);
+    let op1 = document.getElementById("op1").value;
+    let op2 = document.getElementById("op2").value;
+
+    let msg = document.getElementById("msg");
+    let intervalo = document.getElementById("intervalo");
+    let info = document.getElementById("info");
+
+    msg.innerHTML = "";
+    intervalo.innerHTML = "";
+    info.innerHTML = "";
+
+    if(isNaN(a.valor) || isNaN(b.valor)){
+        msg.innerHTML = "⚠️ Ingresa valores válidos";
+        return;
+    }
+
+    let izq = a.valor, der = b.valor;
+
+    if(izq >= der){
+        msg.innerHTML = "❌ Intervalo inválido: el extremo izquierdo debe ser menor que el derecho";
+        return;
+    }
+
+    let margenExtra = (der - izq) * 0.2;
+    let min = izq - margenExtra;
+    let max = der + margenExtra;
+
+    let X = eje(min, max);
+
+    // ✅ LÍNEA DEL INTERVALO
+    ctx.beginPath();
+    ctx.strokeStyle = "#f58220";
+    ctx.lineWidth = 5;
+    ctx.lineCap = "round";
+    ctx.moveTo(X(izq), Y_EJE);
+    ctx.lineTo(X(der), Y_EJE);
+    ctx.stroke();
+    ctx.lineCap = "butt";
+
+    // ✅ CERRADO / ABIERTO
+    let cerradoIzq = (op1 === "≤");
+    let cerradoDer = (op2 === "≤");
+
+    punto(X, izq, cerradoIzq);
+    punto(X, der, cerradoDer);
+
+    etiquetaExtremo(X, izq, a.texto);
+    etiquetaExtremo(X, der, b.texto);
+
+    // ✅ TEXTO PRINCIPAL
+    ctx.fillStyle = "#002F6C";
+    ctx.font = "bold 22px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(`${a.texto} ${op1} x ${op2} ${b.texto}`, ANCHO / 2, 50);
+
+    // ✅ INTERVALO MATEMÁTICO
+    let sI = cerradoIzq ? "[" : "(";
+    let sD = cerradoDer ? "]" : ")";
+
+    intervalo.innerHTML = `${sI}${a.texto}, ${b.texto}${sD}`;
+
+    // ✅ INFORMACIÓN DEL INTERVALO
+    let tipo;
+    if(cerradoIzq && cerradoDer) tipo = "Intervalo cerrado";
+    else if(!cerradoIzq && !cerradoDer) tipo = "Intervalo abierto";
+    else if(cerradoIzq) tipo = "Intervalo semiabierto (cerrado a la izquierda, abierto a la derecha)";
+    else tipo = "Intervalo semiabierto (abierto a la izquierda, cerrado a la derecha)";
+
+    info.innerHTML =
+        `${tipo}<br>` +
+        `Notación de conjunto: { x ∈ ℝ | ${a.texto} ${op1} x ${op2} ${b.texto} }<br>` +
+        `Longitud: ${formatear(der - izq)}`;
+}
+
+// ✅ LIMPIAR
+function limpiar(){
+    document.getElementById("izq").value = "";
+    document.getElementById("der").value = "";
+    document.getElementById("op1").selectedIndex = 0;
+    document.getElementById("op2").selectedIndex = 0;
+    document.getElementById("intervalo").innerHTML = "";
+    document.getElementById("info").innerHTML = "";
+    document.getElementById("msg").innerHTML = "";
+    eje(-10, 10);
+}
+
+// ✅ EXPORTAR
+function exportar(){
+    let link = document.createElement("a");
+    link.download = "intervalo.png";
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+}
+
+// ✅ GRAFICAR CON LA TECLA ENTER
+["izq", "der"].forEach(id => {
+    document.getElementById(id).addEventListener("keydown", e => {
+        if(e.key === "Enter") graficar();
+    });
+});
+
+// inicial
+prepararCanvas();
+eje(-10, 10);
+
+</script>
+<h3> © Aura Elisa Quesada Sepúlveda - 2027</h3>
+</body>
+</html>

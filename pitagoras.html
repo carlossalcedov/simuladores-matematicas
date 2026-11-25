@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teorema de Pitágoras</title>
+
+<style>
+body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background: linear-gradient(135deg, #002F6C, #004a99);
+    margin: 0;
+    padding: 10px;
+    text-align: center;
+    min-height: 100vh;
+    box-sizing: border-box;
+}
+
+.container {
+    background: white;
+    max-width: 460px;
+    margin: 40px auto;
+    padding: 25px;
+    border-radius: 15px;
+    box-shadow: 0 15px 35px rgba(0,0,0,0.4);
+}
+
+h1 { color: #f58220; }
+h3 { color:#FFFFFF; }
+
+label {
+    display: block;
+    margin-top: 10px;
+    font-weight: bold;
+    color: #002F6C;
+}
+
+input, select {
+    width: 90%;
+    padding: 10px;
+    margin-top: 5px;
+    border-radius: 8px;
+    font-size: 15px;
+    box-sizing: border-box;
+}
+
+.ayuda {
+    font-size: 13px;
+    color: #666;
+    margin-top: 8px;
+}
+
+button {
+    margin-top: 10px;
+    padding: 10px;
+    width: 30%;
+    border: none;
+    border-radius: 8px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.calcular { background: #f58220; color: white; }
+.limpiar { background: #999; color: white; }
+.exportar { background: #002F6C; color: white; }
+
+canvas {
+    display: block;
+    margin: 20px auto 0;
+    width: 420px;
+    max-width: 100%;
+    height: auto;
+    background: #ffffff;
+    border-radius: 10px;
+}
+
+.resultado {
+    margin-top: 15px;
+    font-size: 18px;
+    font-weight: bold;
+    color: #002F6C;
+}
+
+.procedimiento {
+    margin-top: 6px;
+    font-size: 15px;
+    color: #333;
+    line-height: 1.6;
+}
+
+.error { color: #c00; }
+</style>
+</head>
+
+<body>
+<div class="container">
+
+<h1>Teorema de Pitágoras</h1>
+
+<label>Cateto a</label>
+<input type="number" id="a" min="0" step="any">
+
+<label>Cateto b</label>
+<input type="number" id="b" min="0" step="any">
+
+<label>Hipotenusa c</label>
+<input type="number" id="c" min="0" step="any">
+
+<label>Unidad</label>
+<select id="unidad">
+<option>mm</option>
+<option selected>cm</option>
+<option>dm</option>
+<option>m</option>
+<option>dam</option>
+<option>hm</option>
+<option>km</option>
+</select>
+
+<div class="ayuda">Escribe dos medidas y deja vacía la que quieres calcular.<br>Si escribes las tres, el simulador verifica si cumplen el teorema.</div>
+
+<button class="calcular" onclick="calcular()">Calcular</button>
+<button class="limpiar" onclick="limpiar()">Limpiar</button>
+<button class="exportar" onclick="exportar()">Exportar</button>
+
+<div id="resultado" class="resultado"></div>
+<div id="procedimiento" class="procedimiento"></div>
+
+<canvas id="canvas" width="420" height="300"></canvas>
+
+</div>
+
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+const ANCHO = 420;   // tamaño lógico del lienzo
+const ALTO = 300;
+
+// márgenes reservados para que las etiquetas nunca se salgan del lienzo
+const M_IZQ = 45, M_DER = 45, M_SUP = 40, M_INF = 50;
+
+const aInput = document.getElementById("a");
+const bInput = document.getElementById("b");
+const cInput = document.getElementById("c");
+const unidadSelect = document.getElementById("unidad");
+const resultado = document.getElementById("resultado");
+const procedimiento = document.getElementById("procedimiento");
+
+let animacionId = null;
+
+// LIENZO NÍTIDO EN PANTALLAS DE ALTA DENSIDAD
+function prepararCanvas(){
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = ANCHO * dpr;
+    canvas.height = ALTO * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+// FORMATO DE NÚMEROS (máximo de decimales indicado, sin ceros sobrantes)
+function fmt(v, dec = 2){
+    let r = Number(v.toFixed(dec));
+    if(Object.is(r, -0)) r = 0;
+    return String(r);
+}
+
+function esExacto(v){
+    return Math.abs(v - Math.round(v * 100) / 100) < 1e-9;
+}
+
+// LEER UN CAMPO: null si está vacío, NaN si no es número
+function leer(input){
+    let t = input.value.trim();
+    if(t === "") return null;
+    return parseFloat(t);
+}
+
+// FONDO + CUADRÍCULA
+function grid() {
+    ctx.clearRect(0, 0, ANCHO, ALTO);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, ANCHO, ALTO);
+
+    ctx.strokeStyle = "#eee";
+    ctx.lineWidth = 1;
+
+    for(let x = 0; x <= ANCHO; x += 20){
+        ctx.beginPath();
+        ctx.moveTo(x + 0.5, 0);
+        ctx.lineTo(x + 0.5, ALTO);
+        ctx.stroke();
+    }
+
+    for(let y = 0; y <= ALTO; y += 20){
+        ctx.beginPath();
+        ctx.moveTo(0, y + 0.5);
+        ctx.lineTo(ANCHO, y + 0.5);
+        ctx.stroke();
+    }
+}
+
+function detenerAnimacion(){
+    if(animacionId !== null){
+        cancelAnimationFrame(animacionId);
+        animacionId = null;
+    }
+}
+
+function mostrarError(texto){
+    detenerAnimacion();
+    resultado.innerHTML = `<span class="error">${texto}</span>`;
+    procedimiento.innerHTML = "";
+    grid();
+}
+
+// CALCULAR
+function calcular() {
+
+    let a = leer(aInput);
+    let b = leer(bInput);
+    let c = leer(cInput);
+    let unidad = unidadSelect.value;
+
+    let dados = [a, b, c].filter(x => x !== null);
+
+    if (dados.some(x => isNaN(x))) return mostrarError("⚠️ Ingresa solo números");
+    if (dados.length < 2) return mostrarError("⚠️ Ingresa al menos 2 valores");
+    if (dados.some(x => x <= 0)) return mostrarError("❌ Las medidas deben ser mayores que cero");
+
+    let faltante = "";
+    let pasos = "";
+
+    if (c === null) {
+        c = Math.sqrt(a*a + b*b);
+        faltante = "c";
+        pasos = `c = √(a² + b²) = √(${fmt(a)}² + ${fmt(b)}²) = √(${fmt(a*a,4)} + ${fmt(b*b,4)}) = √${fmt(a*a + b*b,4)}`;
+    }
+    else if (a === null) {
+        if (c <= b) return mostrarError("❌ La hipotenusa c debe ser mayor que el cateto b");
+        a = Math.sqrt(c*c - b*b);
+        faltante = "a";
+        pasos = `a = √(c² − b²) = √(${fmt(c)}² − ${fmt(b)}²) = √(${fmt(c*c,4)} − ${fmt(b*b,4)}) = √${fmt(c*c - b*b,4)}`;
+    }
+    else if (b === null) {
+        if (c <= a) return mostrarError("❌ La hipotenusa c debe ser mayor que el cateto a");
+        b = Math.sqrt(c*c - a*a);
+        faltante = "b";
+        pasos = `b = √(c² − a²) = √(${fmt(c)}² − ${fmt(a)}²) = √(${fmt(c*c,4)} − ${fmt(a*a,4)}) = √${fmt(c*c - a*a,4)}`;
+    }
+    else {
+        // VERIFICACIÓN: se ingresaron los tres valores
+        let suma = a*a + b*b;
+        let cumple = Math.abs(Math.sqrt(suma) - c) <= 1e-3 * c;
+        let detalle = `a² + b² = ${fmt(a*a,4)} + ${fmt(b*b,4)} = ${fmt(suma,4)}<br>c² = ${fmt(c*c,4)}`;
+        if (!cumple) {
+            mostrarError("❌ Estas medidas no forman un triángulo rectángulo");
+            procedimiento.innerHTML = `${detalle}<br>a² + b² ≠ c²`;
+            return;
+        }
+        resultado.innerHTML = "✅ Las medidas cumplen el teorema: a² + b² = c²";
+        procedimiento.innerHTML = detalle;
+        animar(a, b, c, unidad, "");
+        return;
+    }
+
+    let valor = {a, b, c}[faltante];
+    let signo = esExacto(valor) ? "=" : "≈";
+
+    resultado.innerHTML = `✅ ${faltante} ${signo} ${fmt(valor)} ${unidad}`;
+    procedimiento.innerHTML = `${pasos} ${signo} ${fmt(valor)} ${unidad}`;
+
+    animar(a, b, c, unidad, faltante);
+}
+
+// LIMPIAR
+function limpiar(){
+    detenerAnimacion();
+    aInput.value = "";
+    bInput.value = "";
+    cInput.value = "";
+    resultado.innerHTML = "";
+    procedimiento.innerHTML = "";
+    grid();
+}
+
+// TEXTO CON CONTORNO BLANCO (se lee bien sobre la cuadrícula y las líneas)
+function etiqueta(t, x, y, angulo, resaltado){
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angulo);
+    ctx.font = resaltado ? "bold 16px Arial" : "bold 14px Arial";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "#fff";
+    ctx.strokeText(t, 0, 0);
+    ctx.fillStyle = resaltado ? "#f58220" : "#002F6C";
+    ctx.fillText(t, 0, 0);
+    ctx.restore();
+}
+
+// ANIMACIÓN
+function animar(a, b, c, unidad, faltante){
+
+    detenerAnimacion();
+
+    let anchoUtil = ANCHO - M_IZQ - M_DER;
+    let altoUtil = ALTO - M_SUP - M_INF;
+
+    let escala = Math.min(anchoUtil / a, altoUtil / b);
+    let A = a * escala, B = b * escala;
+
+    // vértice del ángulo recto (abajo a la izquierda), triángulo centrado
+    let x0 = M_IZQ + (anchoUtil - A) / 2;
+    let y0 = M_SUP + (altoUtil + B) / 2;
+
+    let pRecto = [x0, y0];
+    let pDer = [x0 + A, y0];
+    let pSup = [x0, y0 - B];
+
+    // ángulo y normal exterior de la hipotenusa
+    let angC = Math.atan2(B, A);
+    let largoC = Math.hypot(A, B);
+    let nx = B / largoC, ny = -A / largoC;
+
+    let lado = Math.min(14, A * 0.25, B * 0.25);
+
+    let textoA = `a = ${fmt(a)} ${unidad}`;
+    let textoB = `b = ${fmt(b)} ${unidad}`;
+    let textoC = `c = ${fmt(c)} ${unidad}`;
+
+    let progreso = 0;
+
+    function segmento(p, q, t){
+        if(t <= 0) return;
+        t = Math.min(t, 1);
+        ctx.beginPath();
+        ctx.moveTo(p[0], p[1]);
+        ctx.lineTo(p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t);
+        ctx.stroke();
+    }
+
+    function frame(){
+
+        grid();
+
+        // relleno al completar el triángulo
+        if(progreso >= 3){
+            ctx.beginPath();
+            ctx.moveTo(...pRecto);
+            ctx.lineTo(...pDer);
+            ctx.lineTo(...pSup);
+            ctx.closePath();
+            ctx.fillStyle = "rgba(245,130,32,0.2)";
+            ctx.fill();
+        }
+
+        ctx.strokeStyle = "#002F6C";
+        ctx.lineWidth = 3;
+        ctx.lineCap = "round";
+
+        segmento(pRecto, pDer, progreso);       // cateto a
+        segmento(pRecto, pSup, progreso - 1);   // cateto b
+        segmento(pSup, pDer, progreso - 2);     // hipotenusa c
+
+        // marca de ángulo recto
+        ctx.lineWidth = 1.5;
+        ctx.lineCap = "butt";
+        ctx.strokeRect(x0, y0 - lado, lado, lado);
+
+        // etiquetas: aparecen cuando se termina de dibujar cada lado
+        if(progreso >= 1)
+            etiqueta(textoA, x0 + A / 2, y0 + 24, 0, faltante === "a");
+
+        if(progreso >= 2)
+            etiqueta(textoB, x0 - 20, y0 - B / 2, -Math.PI / 2, faltante === "b");
+
+        if(progreso >= 3)
+            etiqueta(textoC, x0 + A / 2 + nx * 20, y0 - B / 2 + ny * 20, angC, faltante === "c");
+
+        if(progreso < 3){
+            progreso = Math.min(progreso + 0.05, 3);
+            animacionId = requestAnimationFrame(frame);
+        } else {
+            animacionId = null;
+        }
+    }
+
+    frame();
+}
+
+// EXPORTAR
+function exportar(){
+    let link = document.createElement("a");
+    link.download = "triangulo_unad.png";
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+}
+
+// CALCULAR CON LA TECLA ENTER
+[aInput, bInput, cInput].forEach(inp => {
+    inp.addEventListener("keydown", e => {
+        if(e.key === "Enter") calcular();
+    });
+});
+
+// inicial
+prepararCanvas();
+grid();
+</script>
+<h3> © Aura Elisa Quesada Sepúlveda - 2027</h3>
+</body>
+</html>
